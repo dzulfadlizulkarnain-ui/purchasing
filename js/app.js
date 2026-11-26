@@ -96,7 +96,7 @@ async function enterApp(meta) { // login carries the sites and the catalog; a re
   if (!App.meta.catalog) throw new Error("Could not load the app settings. Try again.");
   remember("pu.meta", App.meta);
   await loadHome();
-  if (fromCache) api("meta").then(m => { if (m.catalog) { App.meta = m; remember("pu.meta", m); if (!$("scr-home").hidden) renderHome(); } }).catch(() => {});
+  if (fromCache) api("meta").then(m => { if (m.catalog) { App.meta = m; remember("pu.meta", m); if (!$("scr-home").hidden) renderHome(); if (!$("scr-po").hidden) { renderCats(); renderCatalog(); } } }).catch(() => {});
 }
 async function loadHome() {
   show("scr-home");
