@@ -41,7 +41,13 @@ const siteLabel = code => `${code} ${siteName(code)}`.trim();
 const mySite = () => { const s = localStorage.getItem("pu.site") || ""; return App.meta && App.meta.sites.some(x => x.code === s) ? s : ""; };
 const status = s => (App.meta.statuses || {})[s] || s;
 const BADGE = { submitted: "soon", ordered: "draft", sent: "draft", received: "done", cancelled: "" };
-const item = code => App.meta.catalog.find(c => c.code === code);
+const item = code => code ? App.meta.catalog.find(c => c.code === code) : null;
+// as in Code.gs: one line per item, by order code or, with no code, by its description; Popular's own search finds either
+const keyOf = l => l.code ? l.code : "?" + String(l.name || "").trim().toLowerCase().replace(/\s+/g, " ");
+const POPULAR_SEARCH = "https://os.popular.com.sg/index.php?route=product/search&description=1";
+const popularUrl = l => POPULAR_SEARCH + (l.code ? "&model=1&keyword=" + encodeURIComponent(l.code) : "&keyword=" + encodeURIComponent(l.name || ""));
+const popLink = (l, label, cls) => el("a", { class: "ext " + (cls || ""), href: popularUrl(l), target: "_blank", rel: "noopener", onclick: e => e.stopPropagation() }, label || (l.code ? l.code + " ↗" : "Find on Popular ↗"));
+const FREQUENT = "*frequent";
 
 /* ---------- login ---------- */
 async function loadLogin() {
@@ -257,14 +263,14 @@ function openPO(po) { // po: an order still waiting for the purchaser, to change
   $("po-title").textContent = po ? "Change the order" : "Popular order";
   $("po-sub").textContent = siteLabel(site) + (po ? ` · ${po.id}` : "");
   $("btn-po-send").textContent = po ? "Save the changes" : "Send order";
-  $("po-other").open = false; $("other-code").value = ""; $("other-name").value = "";
+  $("po-other").open = false; $("other-code").value = ""; $("other-name").value = ""; otherFind();
   show("scr-po"); renderCart(); renderCats(); renderCatalog();
 }
 const keep = () => { if (!App.cart.id) remember("pu.cart", App.cart); };
-function setQty(code, name, n) {
-  const c = App.cart, l = c.lines.find(x => x.code === code);
+function setQty(it, n) { // it: { code, name }; code is blank for an item the site described
+  const c = App.cart, k = keyOf(it), l = c.lines.find(x => keyOf(x) === k);
   if (l) { if (n > 0) l.qty = n; else c.lines.splice(c.lines.indexOf(l), 1); }
-  else if (n > 0) c.lines.push({ code, name, qty: n });
+  else if (n > 0) c.lines.push({ code: it.code || "", name: it.name, qty: n });
   keep(); renderCart(); renderCatalog();
 }
 function renderCart() {
@@ -276,8 +282,9 @@ function renderCart() {
     const it = item(l.code) || {}, p = Number(it.price) || 0;
     if (p) est += p * l.qty; else unpriced++;
     card.append(el("div", { class: "line on" },
-      el("div", { class: "row-main" }, el("div", { class: "row-title" }, l.name), el("div", { class: "row-sub" }, [l.code, it.unit, p ? "last " + money(p) : ""].filter(Boolean).join(" · "))),
-      stepper(l.qty, n => setQty(l.code, l.name, n))));
+      el("div", { class: "row-main" }, el("div", { class: "row-title" }, l.name),
+        el("div", { class: "row-sub" }, l.code ? [l.code, it.unit, p ? "last " + money(p) : ""].filter(Boolean).join(" · ") : "No order code: the purchaser will find it on Popular")),
+      stepper(l.qty, n => setQty(l, n))));
   });
   if (c.lines.length) card.append(el("p", { class: "muted small est" }, `About ${money(est)} before GST at the last prices paid` + (unpriced ? ` (${unpriced} item${unpriced === 1 ? "" : "s"} with no price yet)` : "") + "."));
   const note = el("textarea", { id: "po-note", rows: "2", maxlength: "500", placeholder: "A note for the purchaser (optional)" });
@@ -288,30 +295,44 @@ function renderCart() {
 }
 function renderCats() {
   const chip = (k, label) => el("button", { class: "chip" + (App.cat === k ? " on" : ""), type: "button", onclick: () => { App.cat = k; renderCats(); renderCatalog(); } }, label);
-  $("po-cats").replaceChildren(chip("", "All"), ...App.meta.categories.map(k => chip(k, k)));
+  const hasFrequent = App.meta.catalog.some(c => c.frequent);
+  $("po-cats").replaceChildren(chip("", "All"), ...(hasFrequent ? [chip(FREQUENT, "Frequently ordered")] : []), ...App.meta.categories.map(k => chip(k, k)));
 }
 function renderCatalog() {
   const q = App.q.trim().toLowerCase(), words = q.split(/\s+/).filter(Boolean);
-  const hits = App.meta.catalog.filter(c => (!App.cat || c.category === App.cat) && words.every(w => `${c.name} ${c.code}`.toLowerCase().includes(w)));
+  const inCat = c => !App.cat || (App.cat === FREQUENT ? c.frequent : c.category === App.cat);
+  const hits = App.meta.catalog.filter(c => inCat(c) && words.every(w => `${c.name} ${c.code}`.toLowerCase().includes(w)))
+    .sort((a, b) => !a.frequent - !b.frequent); // what was bought before comes first; otherwise the sheet's order
   const list = $("po-list"); list.replaceChildren();
-  if (!hits.length) { list.append(el("p", { class: "empty" }, q ? "Nothing matches. Add it by its order code below." : "No items here.")); return; }
+  if (!hits.length) {
+    list.append(el("p", { class: "empty" }, q ? "Nothing in the list matches. Describe it below and the purchaser will find it, or look it up on Popular." : "No items here."));
+    if (q) list.append(el("p", { class: "center" }, popLink({ code: "", name: App.q.trim() }, `Search Popular for “${App.q.trim()}” ↗`)));
+    return;
+  }
   hits.slice(0, 200).forEach(c => {
     const inCart = App.cart.lines.find(l => l.code === c.code);
-    list.append(el("button", { class: "row item" + (inCart ? " on" : ""), type: "button", onclick: () => { setQty(c.code, c.name, (inCart ? inCart.qty : 0) + 1); toast(`Added ${c.name}`); } },
+    list.append(el("button", { class: "row item" + (inCart ? " on" : ""), type: "button", onclick: () => { setQty(c, (inCart ? inCart.qty : 0) + 1); toast(`Added ${c.name}`); } },
       el("div", { class: "row-main" }, el("div", { class: "row-title" }, c.name),
-        el("div", { class: "row-sub" }, [c.code, c.unit, Number(c.price) ? "last " + money(c.price) : ""].filter(Boolean).join(" · "))),
+        el("div", { class: "row-sub" }, c.frequent ? el("span", { class: "tag" }, "Frequently ordered") : null, [c.code, c.unit, Number(c.price) ? "last " + money(c.price) : ""].filter(Boolean).join(" · "))),
       el("span", { class: "badge " + (inCart ? "done" : "add") }, inCart ? `${inCart.qty} in order` : "Add")));
   });
 }
 $("po-search").oninput = e => { App.q = e.target.value; renderCatalog(); };
+function otherFind() { // the "look it up" link follows what the site has typed
+  const name = $("other-name").value.trim(), a = $("other-find");
+  a.href = name ? popularUrl({ code: "", name }) : "https://os.popular.com.sg/";
+  a.textContent = name ? `Look up “${name}” on Popular ↗` : "Look it up on Popular ↗";
+}
+$("other-name").oninput = otherFind;
+$("po-other").ontoggle = () => { if ($("po-other").open && !$("other-name").value && App.q.trim()) { $("other-name").value = App.q.trim(); otherFind(); } };
 $("other-add").onclick = () => {
-  const code = $("other-code").value.replace(/\s/g, ""), name = $("other-name").value.trim();
-  if (!/^\d{3,12}$/.test(code)) { toast("The order code is the number on the item's Popular page."); return; }
-  if (!name) { toast("Put the item's name too, so the purchaser knows what it is."); return; }
-  const l = App.cart.lines.find(x => x.code === code);
-  setQty(code, l ? l.name : name, (l ? l.qty : 0) + 1);
-  $("other-code").value = ""; $("other-name").value = ""; $("po-other").open = false;
-  toast(`Added ${name}`);
+  const code = $("other-code").value.replace(/\s/g, ""), name = $("other-name").value.trim().replace(/\s+/g, " ");
+  if (!name) { toast("Describe the item, so the purchaser knows what to look for."); return; }
+  if (code && !/^\d{3,12}$/.test(code)) { toast("The order code is the number on the item's Popular page. Leave it blank if you don't know it."); return; }
+  const known = item(code), l = App.cart.lines.find(x => keyOf(x) === keyOf({ code, name }));
+  setQty({ code, name: l ? l.name : known ? known.name : name }, (l ? l.qty : 0) + 1);
+  $("other-code").value = ""; $("other-name").value = ""; otherFind(); $("po-other").open = false;
+  toast(code ? `Added ${name}` : `Added ${name}. The purchaser will find its code.`);
 };
 $("btn-po-send").onclick = ev => {
   const c = App.cart;
@@ -339,7 +360,9 @@ function renderView() {
       el("ul", { class: "steps" }, steps.map(([t, at]) => el("li", {}, el("span", {}, t), el("span", { class: "muted" }, fmtWhen(at))))),
       p.note ? el("p", { class: "note" }, p.note) : null),
     el("div", { class: "card" }, el("div", { class: "sup-head" }, el("h2", {}, "Items"), el("span", { class: "muted small" }, `${p.lines.length}`)),
-      p.lines.map(l => el("div", { class: "line" }, el("span", { class: "q" }, `${l.qty} ×`), el("div", { class: "row-main" }, el("div", { class: "row-title" }, l.name), el("div", { class: "row-sub" }, l.code))))));
+      p.lines.map(l => el("div", { class: "line" }, el("span", { class: "q" }, `${l.qty} ×`),
+        el("div", { class: "row-main" }, el("div", { class: "row-title" }, l.name), el("div", { class: "row-sub" }, l.code ? null : "No order code yet")),
+        popLink(l, null, l.code ? "code" : "")))));
   const acts = el("div", { class: "actions" });
   const act = (label, cls, fn, ask) => acts.append(el("button", { class: "btn " + cls, type: "button", onclick: ev => { if (ask && !sure(ev.target, ask)) return; busyBtn(ev.target, "Saving…", fn); } }, label));
   const move = (action, msg) => async () => { const a = await api(action, { id: p.id }); App.view = a.item; toast(msg); await refreshHome(); renderView(); };
@@ -360,10 +383,24 @@ function openCombine() {
   $("combine-ref") && ($("combine-ref").value = "");
   show("scr-combine"); renderCombine();
 }
-function combine(pos) { // as combine() in Code.gs: every line of these POs added up by order code
+function combine(pos) { // as combine() in Code.gs: every line of these POs added up by order code, items with no code last
   const by = {};
-  pos.forEach(p => p.lines.forEach(l => { const t = by[l.code] || (by[l.code] = { code: l.code, name: l.name, qty: 0, sites: [] }); t.qty += Number(l.qty) || 0; t.sites.push(`${p.site} ${l.qty}`); }));
-  return Object.values(by).sort((a, b) => a.name.localeCompare(b.name));
+  pos.forEach(p => p.lines.forEach(l => { const k = keyOf(l), t = by[k] || (by[k] = { code: l.code || "", name: l.name, qty: 0, sites: [] }); t.qty += Number(l.qty) || 0; t.sites.push(`${p.site} ${l.qty}`); }));
+  return Object.values(by).sort((a, b) => (!a.code - !b.code) || a.name.localeCompare(b.name));
+}
+function codeFix(l, waiting) { // the purchaser found a described item on Popular: its code goes on every waiting PO that asked for it
+  const input = el("input", { inputmode: "numeric", autocomplete: "off", placeholder: "Order code from Popular" });
+  const save = el("button", { class: "btn ghost", type: "button", onclick: () => {
+    const code = input.value.replace(/\s/g, "");
+    if (!/^\d{3,12}$/.test(code)) { toast("The order code is the number on the item's Popular page."); return; }
+    const ids = waiting.filter(p => p.lines.some(x => !x.code && keyOf(x) === keyOf(l))).map(p => p.id);
+    busyBtn(save, "Saving…", async () => {
+      const a = await api("po_code", { ids, name: l.name, code });
+      toast(`Code ${code} saved on ${a.changed} order${a.changed === 1 ? "" : "s"}.`);
+      await refreshHome(); App.meta = await api("meta"); remember("pu.meta", App.meta); renderCombine();
+    });
+  } }, "Save");
+  return el("div", { class: "codefix" }, input, save);
 }
 function renderCombine() {
   const waiting = App.home.pos.filter(p => p.status === "submitted"), picked = waiting.filter(p => App.sel.has(p.id)), lines = combine(picked);
@@ -377,13 +414,17 @@ function renderCombine() {
       el("div", { class: "row-sub" }, `${p.by} · ${fmtWhen(p.created_at)}` + (p.note ? ` · “${p.note}”` : ""))));
   })));
   let est = 0;
-  const card = el("div", { class: "card" }, el("div", { class: "sup-head" }, el("h2", {}, "To order"), el("span", { class: "muted small" }, "added up by order code")));
+  const nocode = lines.filter(l => !l.code).length;
+  const card = el("div", { class: "card" }, el("div", { class: "sup-head" }, el("h2", {}, "To order"), el("span", { class: "muted small" }, "tap a code to open it on Popular")));
+  if (nocode) card.append(el("p", { class: "note small" }, `${nocode} item${nocode === 1 ? " has" : "s have"} no order code yet: a site described ${nocode === 1 ? "it" : "them"}. Tap “Find on Popular”, then put the code in and save it.`));
   lines.forEach(l => { const p = Number((item(l.code) || {}).price) || 0; est += p * l.qty;
-    card.append(el("div", { class: "line" }, el("span", { class: "q" }, `${l.qty} ×`),
-      el("div", { class: "row-main" }, el("div", { class: "row-title" }, l.name), el("div", { class: "row-sub" }, `${l.code} · ${l.sites.join(", ")}`)))); });
+    card.append(el("div", { class: "line" + (l.code ? "" : " wrap") }, el("span", { class: "q" }, `${l.qty} ×`),
+      el("div", { class: "row-main" }, el("div", { class: "row-title" }, l.name), el("div", { class: "row-sub" }, l.sites.join(", "))),
+      popLink(l, null, l.code ? "code" : ""),
+      l.code ? null : codeFix(l, waiting))); });
   if (!lines.length) card.append(el("p", { class: "muted small" }, "Tick at least one order."));
   else card.append(el("p", { class: "muted small est" }, `About ${money(est)} before GST, ${money(est * (1 + GST))} with GST, at the last prices paid.`));
-  const text = lines.map(l => `${l.code}\t${l.qty}\t${l.name}`).join("\n");
+  const text = lines.map(l => `${l.code || "NO CODE"}\t${l.qty}\t${l.name}`).join("\n");
   card.append(el("div", { class: "actions" },
     el("button", { class: "btn ghost", type: "button", disabled: !lines.length, onclick: () => copy(text) }, "Copy the list"),
     el("a", { class: "btn ghost", href: "https://os.popular.com.sg/", target: "_blank", rel: "noopener" }, "Open Popular")));

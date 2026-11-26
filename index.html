@@ -76,10 +76,11 @@
     <div id="po-cats" class="chips"></div>
     <div id="po-list" class="list"></div>
     <details id="po-other" class="card other">
-      <summary>Not in the list? Add it by order code</summary>
-      <p class="muted small">The order code is on the item's page on os.popular.com.sg.</p>
-      <label class="field"><span class="label">Order code</span><input id="other-code" inputmode="numeric" autocomplete="off" placeholder="e.g. 2286739"></label>
-      <label class="field"><span class="label">Item name</span><input id="other-name" autocomplete="off" placeholder="as on Popular's website"></label>
+      <summary>Not in the list? Describe it here</summary>
+      <p class="muted small">Say what you need. If you know its order code, put that in too. If you don't, the purchaser will find it on Popular.</p>
+      <label class="field"><span class="label">What you need</span><input id="other-name" autocomplete="off" placeholder="e.g. whiteboard marker, red"></label>
+      <p class="small"><a id="other-find" class="ext" href="https://os.popular.com.sg/" target="_blank" rel="noopener">Look it up on Popular ↗</a></p>
+      <label class="field"><span class="label">Order code <span class="field-sub">(optional, on the item's Popular page)</span></span><input id="other-code" inputmode="numeric" autocomplete="off" placeholder="e.g. 2286739"></label>
       <button id="other-add" class="btn ghost" type="button">Add to the order</button>
     </details>
   </div>

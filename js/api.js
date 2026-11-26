@@ -61,7 +61,7 @@ async function mock(b) {
     if (!from.includes(p.status)) throw new Error(`This order is "${C.PO_STATUS[p.status]}" now.`);
     if (ok && !ok(p)) throw new Error(refusal);
     Object.assign(p, { status: to, [to + "_by"]: user, [to + "_at"]: now(), updated_at: now() }); return { item: p }; };
-  const learn = lines => lines.forEach(l => { if (!demo.catalog.some(c => c.code === l.code)) demo.catalog.push({ code: l.code, name: l.name, category: "", unit: "", price: "", price_date: "" }); });
+  const learn = lines => lines.forEach(l => { if (l.code && !demo.catalog.some(c => c.code === l.code)) demo.catalog.push({ code: l.code, name: l.name, category: "", unit: "", price: "", price_date: "", frequent: false }); });
   const meta = () => ({ sites: demo.sites, catalog: demo.catalog, categories: C.CATEGORIES, purchaser: C.isPurchaser(demo.user, demo.settings.purchasers), purchasers: demo.settings.purchasers, company: "KitchenBASE (demo)", statuses: C.PO_STATUS, urban_sheet: "" });
   try {
     switch (b.action) {
@@ -115,6 +115,13 @@ async function mock(b) {
       case "po_order": { buyer(); if (!(b.ids || []).length) throw new Error("Tick the orders that went into the Popular order.");
         b.ids.forEach(id => { const p = po(id); if (p.status === "submitted") Object.assign(p, { status: "ordered", ordered_by: user, ordered_at: now(), popular_ref: String(b.ref || "").trim(), updated_at: now() }); });
         return { ok: true, ordered: b.ids.length }; }
+      case "po_code": { buyer(); const code = String(b.code || "").replace(/\s+/g, "");
+        if (!/^\d{3,12}$/.test(code)) throw new Error("The order code is the number on the item's Popular page (3 to 12 digits).");
+        let changed = 0;
+        (b.ids || []).forEach(id => { const p = po(id); if (p.status !== "submitted") return; const out = C.giveCode(p.lines, b.name, code); if (!out) return;
+          Object.assign(p, { lines: out, lines_text: C.linesText(out), items: String(out.length), updated_at: now() }); changed++; });
+        if (changed) learn([{ code, name: String(b.name).trim() }]);
+        return { ok: true, changed }; }
       case "po_sent": buyer(); return move(b.id, "sent", ["ordered"]);
       case "po_received": return move(b.id, "received", ["ordered", "sent"]);
     }
@@ -144,19 +151,19 @@ async function demoSeed() {
   const sites = [["S1", "Tampines"], ["S2", "Clementi"], ["S3", "Sembawang"], ["S6", "Bishan"], ["S7", "Serangoon"], ["S8", "Bedok"], ["S9", "Bukit Batok"], ["S10", "Macpherson"], ["S11", "Jurong West"], ["S12", "Mediapolis"], ["S13", "Bedok II"]].map(([code, name]) => ({ code, name }));
   const d = new Date(), month = d.toISOString().slice(0, 7), prev = new Date(d.getFullYear(), d.getMonth() - 1, 15).toISOString().slice(0, 7), ago = h => new Date(Date.now() - h * 36e5).toISOString();
   const cat = code => C.SEED_CATALOG.find(r => r[0] === code);
-  const mk = (site, status, by, hours, codes, extra) => { const lines = codes.map(([c, q]) => ({ code: c, name: cat(c)[1], qty: q }));
+  const mk = (site, status, by, hours, codes, extra, described) => { const lines = codes.map(([c, q]) => ({ code: c, name: cat(c)[1], qty: q })).concat(described || []);
     return Object.assign({ id: `PO-demo-${site}-${hours}`, site, status, by, created_at: ago(hours), updated_at: ago(hours), note: "", lines, lines_text: C.linesText(lines), items: String(lines.length) }, extra || {}); };
   return {
     C, user: "", names: ["Demo Purchaser", "Demo Supervisor", "Demo Shift Lead"], sites,
     settings: { purchasers: "Demo Purchaser" },
-    catalog: C.SEED_CATALOG.map(([code, name, category, unit, price, price_date]) => ({ code, name, category, unit, price, price_date })),
+    catalog: C.SEED_CATALOG.map(([code, name, category, unit, price, price_date]) => ({ code, name, category, unit, price, price_date, frequent: !!price })), // priced = on a Popular invoice, as the live sheet's source
     tabs: [{ tab: C.tabNameFor(month), values, formulas }, { tab: C.tabNameFor(prev), values: old, formulas }],
     rounds: [{ round: prev, tab: C.tabNameFor(prev), status: "sent", opened_by: "Demo Purchaser", opened_at: ago(24 * 30), sent_by: "Demo Purchaser", sent_at: ago(24 * 25) },
       { round: month, tab: C.tabNameFor(month), status: "open", opened_by: "Demo Purchaser", opened_at: ago(48), sent_by: "", sent_at: "" }],
     log: [{ round: month, site: "S1", by: "Demo Supervisor", at: ago(20) }, { round: month, site: "S6", by: "Demo Shift Lead", at: ago(5) }],
     pos: [
       mk("S3", "submitted", "Demo Shift Lead", 3, [["2074999", 1], ["1743993", 1], ["2286739", 3], ["2259328", 1]]),
-      mk("S12", "submitted", "Demo Supervisor", 6, [["2330883", 1], ["2236437", 1], ["211452", 2], ["2286739", 2]], { note: "Batteries for the door sensor" }),
+      mk("S12", "submitted", "Demo Supervisor", 6, [["2330883", 1], ["2236437", 1], ["211452", 2], ["2286739", 2]], { note: "Batteries for the door sensor" }, [{ code: "", name: "Whiteboard marker, red", qty: 2 }]),
       mk("S1", "ordered", "Demo Supervisor", 50, [["552309", 3], ["2250337", 4], ["456302", 1]], { ordered_by: "Demo Purchaser", ordered_at: ago(30), popular_ref: "SO-104233" }),
       mk("S9", "sent", "Demo Shift Lead", 120, [["2287116", 1], ["1954966", 1]], { ordered_by: "Demo Purchaser", ordered_at: ago(100), popular_ref: "SO-103981", sent_by: "Demo Purchaser", sent_at: ago(20) }),
       mk("S6", "received", "Demo Shift Lead", 300, [["2373104", 3], ["2250338", 1]], { ordered_by: "Demo Purchaser", ordered_at: ago(280), popular_ref: "SO-103710", sent_by: "Demo Purchaser", sent_at: ago(200), received_by: "Demo Shift Lead", received_at: ago(190) }),
