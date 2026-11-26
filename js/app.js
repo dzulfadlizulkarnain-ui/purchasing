@@ -298,10 +298,12 @@ function renderCats() {
   const hasFrequent = App.meta.catalog.some(c => c.frequent);
   $("po-cats").replaceChildren(chip("", "All"), ...(hasFrequent ? [chip(FREQUENT, "Frequently ordered")] : []), ...App.meta.categories.map(k => chip(k, k)));
 }
+const FIND = new WeakMap(); // each item's search text, worked out once (kept off the item, so the saved copy of the catalog stays small)
+const findText = c => FIND.get(c) || (FIND.set(c, `${c.name} ${c.code}`.toLowerCase()), FIND.get(c));
 function renderCatalog() {
   const q = App.q.trim().toLowerCase(), words = q.split(/\s+/).filter(Boolean);
   const inCat = c => !App.cat || (App.cat === FREQUENT ? c.frequent : c.category === App.cat);
-  const hits = App.meta.catalog.filter(c => inCat(c) && words.every(w => `${c.name} ${c.code}`.toLowerCase().includes(w)))
+  const hits = App.meta.catalog.filter(c => inCat(c) && words.every(w => findText(c).includes(w)))
     .sort((a, b) => !a.frequent - !b.frequent); // what was bought before comes first; otherwise the sheet's order
   const list = $("po-list"); list.replaceChildren();
   if (!hits.length) {
@@ -309,7 +311,9 @@ function renderCatalog() {
     if (q) list.append(el("p", { class: "center" }, popLink({ code: "", name: App.q.trim() }, `Search Popular for “${App.q.trim()}” ↗`)));
     return;
   }
-  hits.slice(0, 200).forEach(c => {
+  const SHOW = 150;
+  if (hits.length > SHOW) list.append(el("p", { class: "muted small" }, `${hits.length.toLocaleString()} items. The first ${SHOW} are shown, so type in the search box or pick a category to find the rest.`));
+  hits.slice(0, SHOW).forEach(c => {
     const inCart = App.cart.lines.find(l => l.code === c.code);
     list.append(el("button", { class: "row item" + (inCart ? " on" : ""), type: "button", onclick: () => { setQty(c, (inCart ? inCart.qty : 0) + 1); toast(`Added ${c.name}`); } },
       el("div", { class: "row-main" }, el("div", { class: "row-title" }, c.name),
