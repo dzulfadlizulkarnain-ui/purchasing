@@ -38,15 +38,19 @@ const cached = k => { try { return JSON.parse(localStorage.getItem(k) || "null")
 const remember = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
 const siteName = code => { const s = (App.meta ? App.meta.sites : []).find(s => s.code === code); return s ? s.name : ""; };
 const siteLabel = code => `${code} ${siteName(code)}`.trim();
-const mySite = () => { const s = localStorage.getItem("pu.site") || ""; return App.meta && App.meta.sites.some(x => x.code === s) ? s : ""; };
+/* Who orders for which site: a shift lead or supervisor for their Home Site in Smart GMV (my_sites, from the server, which checks it
+ * again on every order); the purchaser for every site. An older server sends no my_sites: every site, as before. */
+const allowed = () => { const m = App.meta && App.meta.my_sites, all = App.meta ? App.meta.sites.map(s => s.code) : []; return Array.isArray(m) ? m.filter(c => all.includes(c)) : all; };
+const mySite = () => { const ok = allowed(), s = localStorage.getItem("pu.site") || ""; return ok.includes(s) ? s : ok.length === 1 ? ok[0] : ""; };
 const status = s => (App.meta.statuses || {})[s] || s;
 const BADGE = { submitted: "soon", ordered: "draft", sent: "draft", received: "done", cancelled: "" };
-const item = code => code ? App.meta.catalog.find(c => c.code === code) : null;
+let IDX = null, IDX_OF = null; // the catalog by order code, rebuilt when a new catalog arrives
+const item = code => { if (!code || !App.meta) return null; if (IDX_OF !== App.meta.catalog) { IDX = new Map(App.meta.catalog.map(c => [c.code, c])); IDX_OF = App.meta.catalog; } return IDX.get(code) || null; };
 /* The catalog (thousands of items) is saved on the phone apart from the rest of the settings, with the version the server gave it. The phone
  * sends that version with each login and settings call, and the server sends the catalog again only when it has changed. */
 const catv = () => (cached("pu.cat") || {}).v || "";
 function withCatalog(m) {
-  if (m.catalog_rows) { m.catalog = m.catalog_rows.map(r => ({ code: r[0], name: r[1], category: r[2], unit: r[3], price: r[4], frequent: !!r[5] })); delete m.catalog_rows; }
+  if (m.catalog_rows) { m.catalog = m.catalog_rows.map(r => ({ code: r[0], name: r[1], category: r[2], unit: r[3], price: r[4], frequent: !!r[5], model: r[6] || "", pid: r[7] || "" })); delete m.catalog_rows; }
   else if (!m.catalog && m.catalog_version) { const c = cached("pu.cat"); if (c && c.v === m.catalog_version) m.catalog = c.items; }
   return m;
 }
@@ -69,7 +73,12 @@ function savedMeta() {
 // as in Code.gs: one line per item, by order code or, with no code, by its description; Popular's own search finds either
 const keyOf = l => l.code ? l.code : "?" + String(l.name || "").trim().toLowerCase().replace(/\s+/g, " ");
 const POPULAR_SEARCH = "https://os.popular.com.sg/index.php?route=product/search&description=1";
-const popularUrl = l => POPULAR_SEARCH + (l.code ? "&model=1&keyword=" + encodeURIComponent(l.code) : "&keyword=" + encodeURIComponent(l.name || ""));
+const POPULAR_ITEM = "https://os.popular.com.sg/index.php?route=product/product&product_id=";
+const pidOf = l => l.pid || (item(l.code) || {}).pid || "";
+const modelOf = l => l.model || (item(l.code) || {}).model || "";
+// the item's own page on Popular when the catalog knows it, otherwise Popular's search for the code (or, with no code, the description)
+const popularUrl = l => pidOf(l) ? POPULAR_ITEM + encodeURIComponent(pidOf(l))
+  : POPULAR_SEARCH + (l.code ? "&model=1&keyword=" + encodeURIComponent(l.code) : "&keyword=" + encodeURIComponent(l.name || ""));
 const popLink = (l, label, cls) => el("a", { class: "ext " + (cls || ""), href: popularUrl(l), target: "_blank", rel: "noopener", onclick: e => e.stopPropagation() }, label || (l.code ? l.code + " ↗" : "Find on Popular ↗"));
 const FREQUENT = "*frequent";
 
@@ -120,7 +129,7 @@ async function enterApp(meta) { // login carries the sites and the catalog; a re
   if (!App.meta.catalog) throw new Error("Could not load the app settings. Try again.");
   saveMeta(App.meta);
   await loadHome();
-  if (fromCache) getMeta().then(m => { if (m.catalog) { App.meta = m; saveMeta(m); if (!$("scr-home").hidden) renderHome(); if (!$("scr-po").hidden) { renderCats(); renderCatalog(); } } }).catch(() => {});
+  if (fromCache) getMeta().then(m => { if (m.catalog) { App.meta = m; saveMeta(m); if (!$("scr-home").hidden) renderHome(); if (!$("scr-po").hidden) { renderCats(); renderCatalog(); } if (!$("scr-cart").hidden) renderCart(); } }).catch(() => {});
 }
 async function loadHome() {
   show("scr-home");
@@ -148,11 +157,17 @@ const poRow = (p, sub) => el("button", { class: "row po", type: "button", onclic
   el("span", { class: "badge " + (BADGE[p.status] || "") }, status(p.status)));
 
 function orderHome() {
-  const site = mySite(), out = [];
-  const pick = el("select", { id: "site-pick", onchange: e => { localStorage.setItem("pu.site", e.target.value); renderHome(); } },
-    el("option", { value: "" }, "Pick your site"), App.meta.sites.map(s => el("option", { value: s.code, selected: s.code === site }, `${s.code} ${s.name}`)));
-  out.push(el("label", { class: "field site-field" }, el("span", { class: "label" }, "Ordering for"), pick));
-  if (!site) { out.push(el("p", { class: "empty" }, "Pick your site to order. The phone remembers it.")); return out; }
+  const site = mySite(), ok = allowed(), out = [];
+  if (!ok.length) {
+    out.push(el("div", { class: "card" }, el("div", { class: "sup-head" }, el("h2", {}, "No Home Site yet")),
+      el("p", { class: "muted" }, `You order for your own site, and Smart GMV has no Home Site for ${session.name}. Ask ops to set it in the Staff tab. It shows here within 10 minutes.`)));
+    return out;
+  }
+  if (ok.length === 1) out.push(el("div", { class: "field site-field" }, el("span", { class: "label" }, "Ordering for"), el("div", { class: "site-fixed" }, siteLabel(ok[0]))));
+  else out.push(el("label", { class: "field site-field" }, el("span", { class: "label" }, App.meta.purchaser ? "Ordering for (you can order for any site)" : "Ordering for"),
+    el("select", { id: "site-pick", onchange: e => { localStorage.setItem("pu.site", e.target.value); renderHome(); } },
+      site ? null : el("option", { value: "" }, "Pick the site"), ok.map(c => el("option", { value: c, selected: c === site }, siteLabel(c))))));
+  if (!site) { out.push(el("p", { class: "empty" }, "Pick the site to order for. The phone remembers it.")); return out; }
 
   // Urban Plus: this month's cleaning supplies, one column per site in the Urban Plus sheet
   const u = App.home.urban || {}, r = u.round, mine = (u.sites || []).find(s => s.code === site);
@@ -277,75 +292,108 @@ $("btn-urban-save").onclick = ev => {
 };
 $("urban-back").onclick = () => guard(loadHome);
 
-/* ---------- Popular: building a PO ---------- */
-function openPO(po) { // po: an order still waiting for the purchaser, to change it; null: a new one (the unsent one is kept on the phone)
+/* ---------- Popular: the shop, then the order ---------- */
+function openPO(po) { // po: an order still waiting for the purchaser, to change it (opens on the order); null: shop for a new one (the unsent one is kept on the phone)
   const site = po ? po.site : mySite();
+  if (!site) { toast("Pick the site first."); return; }
   const draft = cached("pu.cart");
   App.cart = po ? { id: po.id, site, note: po.note || "", lines: po.lines.map(l => ({ code: l.code, name: l.name, qty: Number(l.qty) })) }
     : draft && draft.site === site ? draft : { id: "", site, note: "", lines: [] };
-  App.q = ""; App.cat = ""; $("po-search").value = "";
-  $("po-title").textContent = po ? "Change the order" : "Popular order";
-  $("po-sub").textContent = siteLabel(site) + (po ? ` · ${po.id}` : "");
+  App.q = ""; App.more = 0; App.shopY = 0; $("po-search").value = "";
+  App.cat = App.meta.catalog.some(c => c.frequent) ? FREQUENT : App.meta.categories[0] || "";
+  const sub = siteLabel(site) + (po ? ` · ${po.id}` : "");
+  $("po-title").textContent = po ? "Add to the order" : "Popular"; $("po-sub").textContent = sub;
+  $("cart-title").textContent = po ? "Change the order" : "Your order"; $("cart-sub").textContent = sub;
   $("btn-po-send").textContent = po ? "Save the changes" : "Send order";
   $("po-other").open = false; $("other-code").value = ""; $("other-name").value = ""; otherFind();
-  show("scr-po"); renderCart(); renderCats(); renderCatalog();
+  if (po) openCart(); else openShop();
 }
+function openShop() { show("scr-po"); renderCats(); renderCatalog(); renderBar(); if (App.shopY) window.scrollTo(0, App.shopY); }
+function openCart() { if (!$("scr-po").hidden) App.shopY = window.scrollY; show("scr-cart"); renderCart(); }
 const keep = () => { if (!App.cart.id) remember("pu.cart", App.cart); };
+const lineOf = it => { const k = keyOf(it); return App.cart.lines.find(l => keyOf(l) === k); };
 function setQty(it, n) { // it: { code, name }; code is blank for an item the site described
-  const c = App.cart, k = keyOf(it), l = c.lines.find(x => keyOf(x) === k);
+  const c = App.cart, l = lineOf(it);
   if (l) { if (n > 0) l.qty = n; else c.lines.splice(c.lines.indexOf(l), 1); }
   else if (n > 0) c.lines.push({ code: it.code || "", name: it.name, qty: n });
-  keep(); renderCart(); renderCatalog();
+  keep(); renderBar();
 }
+function cartEst() { let est = 0, unpriced = 0; App.cart.lines.forEach(l => { const p = Number((item(l.code) || {}).price) || 0; if (p) est += p * l.qty; else unpriced++; }); return { est, unpriced }; }
+function renderBar() { // the shop's bottom bar: how much is in the order, and the way to it
+  const n = App.cart.lines.length, { est } = cartEst(), b = $("btn-po-cart");
+  b.replaceChildren(...(n ? [el("span", { class: "cb-count" }, String(n)), el("span", { class: "cb-label" }, "View the order"), el("span", { class: "cb-amt" }, est ? "~" + money(est) : "")]
+    : [el("span", { class: "cb-label" }, App.cart.id ? "The order is empty" : "Nothing in the order yet")]));
+  b.disabled = !n && !App.cart.id;
+}
+$("btn-po-cart").onclick = () => openCart();
 function renderCart() {
   const c = App.cart, box = $("po-cart"); box.replaceChildren();
   const card = el("div", { class: "card cart" }, el("div", { class: "sup-head" }, el("h2", {}, "In this order"), el("span", { class: "muted small" }, `${c.lines.length} item${c.lines.length === 1 ? "" : "s"}`)));
-  if (!c.lines.length) card.append(el("p", { class: "muted small" }, "Nothing yet. Tap items below to add them."));
-  let est = 0, unpriced = 0;
+  if (!c.lines.length) card.append(el("p", { class: "muted small" }, "Nothing yet. Go back to the shop to add items."));
   c.lines.forEach(l => {
-    const it = item(l.code) || {}, p = Number(it.price) || 0;
-    if (p) est += p * l.qty; else unpriced++;
+    const it = item(l.code) || {}, p = Number(it.price) || 0, model = modelOf(l);
     card.append(el("div", { class: "line on" },
       el("div", { class: "row-main" }, el("div", { class: "row-title" }, l.name),
-        el("div", { class: "row-sub" }, l.code ? [l.code, it.unit, p ? "last " + money(p) : ""].filter(Boolean).join(" · ") : "No order code: the purchaser will find it on Popular")),
-      stepper(l.qty, n => setQty(l, n))));
+        l.code ? el("div", { class: "ids" }, el("span", { class: "id-code" }, l.code), model ? el("span", { class: "id-model" }, "Model No. " + model) : null) : null,
+        el("div", { class: "row-sub" }, l.code ? [it.unit, p ? money(p) + " each last time" : ""].filter(Boolean).join(" · ") : "No order code: the purchaser will find it on Popular")),
+      stepper(l.qty, n => { setQty(l, n); renderCart(); })));
   });
+  const { est, unpriced } = cartEst();
   if (c.lines.length) card.append(el("p", { class: "muted small est" }, `About ${money(est)} before GST at the last prices paid` + (unpriced ? ` (${unpriced} item${unpriced === 1 ? "" : "s"} with no price yet)` : "") + "."));
+  card.append(el("button", { class: "btn ghost addmore", type: "button", onclick: () => openShop() }, "+ Add more items"));
   const note = el("textarea", { id: "po-note", rows: "2", maxlength: "500", placeholder: "A note for the purchaser (optional)" });
   note.value = c.note || ""; note.addEventListener("input", () => { c.note = note.value; keep(); });
   card.append(note);
-  if (!c.id && c.lines.length) card.append(el("button", { class: "link", type: "button", onclick: ev => { if (!sure(ev.target, "Tap again to clear the order")) return; App.cart.lines = []; App.cart.note = ""; localStorage.removeItem("pu.cart"); renderCart(); renderCatalog(); } }, "Clear the order"));
+  if (!c.id && c.lines.length) card.append(el("button", { class: "link", type: "button", onclick: ev => { if (!sure(ev.target, "Tap again to clear the order")) return; App.cart.lines = []; App.cart.note = ""; localStorage.removeItem("pu.cart"); renderCart(); } }, "Clear the order"));
   box.append(card);
+  $("btn-po-send").disabled = !c.lines.length;
 }
-function renderCats() {
-  const chip = (k, label) => el("button", { class: "chip" + (App.cat === k ? " on" : ""), type: "button", onclick: () => { App.cat = k; renderCats(); renderCatalog(); } }, label);
+function renderCats() { // Frequently ordered first, then the categories; while searching, no chip is on: the search covers everything
+  const searching = !!App.q.trim();
+  const chip = (k, label) => el("button", { class: "chip" + (!searching && App.cat === k ? " on" : ""), type: "button", onclick: () => {
+    App.cat = k; App.q = ""; App.more = 0; $("po-search").value = ""; renderCats(); renderCatalog(); window.scrollTo(0, 0); } }, label);
   const hasFrequent = App.meta.catalog.some(c => c.frequent);
-  $("po-cats").replaceChildren(chip("", "All"), ...(hasFrequent ? [chip(FREQUENT, "Frequently ordered")] : []), ...App.meta.categories.map(k => chip(k, k)));
+  $("po-cats").replaceChildren(...(hasFrequent ? [chip(FREQUENT, "★ Frequently ordered")] : []), ...App.meta.categories.map(k => chip(k, k)));
 }
 const FIND = new WeakMap(); // each item's search text, worked out once (kept off the item, so the saved copy of the catalog stays small)
-const findText = c => FIND.get(c) || (FIND.set(c, `${c.name} ${c.code}`.toLowerCase()), FIND.get(c));
+const findText = c => FIND.get(c) || (FIND.set(c, `${c.name} ${c.code} ${c.model || ""}`.toLowerCase()), FIND.get(c));
+const PAGE = 40;
+function productCard(c) { // one item in the shop: full name, then order code and model no. (what the purchaser searches Popular by)
+  const l = lineOf(c);
+  const node = el("div", { class: "prod" + (l ? " on" : "") },
+    el("div", { class: "prod-main" },
+      el("div", { class: "prod-name" }, c.name),
+      el("div", { class: "ids" }, el("span", { class: "id-code" }, c.code), c.model ? el("span", { class: "id-model" }, "Model No. " + c.model) : null),
+      el("div", { class: "row-sub" }, c.frequent ? el("span", { class: "tag" }, "Frequently ordered") : null,
+        [c.unit, Number(c.price) ? "last " + money(c.price) : ""].filter(Boolean).join(" · "), " ", popLink(c, "Popular ↗", "small"))),
+    el("div", { class: "prod-act" }, l
+      ? stepper(l.qty, n => { setQty(c, n); if (!n) node.replaceWith(productCard(c)); })
+      : el("button", { class: "addbtn", type: "button", "aria-label": "Add " + c.name, onclick: () => { setQty(c, 1); node.replaceWith(productCard(c)); } }, "Add")));
+  return node;
+}
 function renderCatalog() {
-  const q = App.q.trim().toLowerCase(), words = q.split(/\s+/).filter(Boolean);
-  const inCat = c => !App.cat || (App.cat === FREQUENT ? c.frequent : c.category === App.cat);
-  const hits = App.meta.catalog.filter(c => inCat(c) && words.every(w => findText(c).includes(w)))
-    .sort((a, b) => !a.frequent - !b.frequent); // what was bought before comes first; otherwise the sheet's order
+  const q = App.q.trim().toLowerCase(), words = q.split(/\s+/).filter(Boolean), all = App.meta.catalog, total = all.length.toLocaleString();
+  let hits;
+  if (words.length) { // a search covers the whole catalog: an exact order code or model no. first, then what was bought before
+    const exact = c => c.code.toLowerCase() === q || (c.model || "").toLowerCase() === q ? 0 : 1;
+    hits = all.filter(c => words.every(w => findText(c).includes(w))).sort((a, b) => exact(a) - exact(b) || !a.frequent - !b.frequent);
+  } else hits = all.filter(c => App.cat === FREQUENT ? c.frequent : c.category === App.cat).sort((a, b) => !a.frequent - !b.frequent);
+  $("po-hint").textContent = words.length ? `${hits.length.toLocaleString()} match${hits.length === 1 ? "" : "es"} in all ${total} items`
+    : App.cat === FREQUENT ? `${hits.length} items bought before on a Popular invoice. Search to see all ${total}.` : `${hits.length.toLocaleString()} items in ${App.cat}`;
   const list = $("po-list"); list.replaceChildren();
   if (!hits.length) {
-    list.append(el("p", { class: "empty" }, q ? "Nothing in the list matches. Describe it below and the purchaser will find it, or look it up on Popular." : "No items here."));
+    list.append(el("p", { class: "empty" }, q ? "Nothing matches. Describe it below and the purchaser will find it, or look it up on Popular." : "No items here."));
     if (q) list.append(el("p", { class: "center" }, popLink({ code: "", name: App.q.trim() }, `Search Popular for “${App.q.trim()}” ↗`)));
     return;
   }
-  const SHOW = 150;
-  if (hits.length > SHOW) list.append(el("p", { class: "muted small" }, `${hits.length.toLocaleString()} items. The first ${SHOW} are shown, so type in the search box or pick a category to find the rest.`));
-  hits.slice(0, SHOW).forEach(c => {
-    const inCart = App.cart.lines.find(l => l.code === c.code);
-    list.append(el("button", { class: "row item" + (inCart ? " on" : ""), type: "button", onclick: () => { setQty(c, (inCart ? inCart.qty : 0) + 1); toast(`Added ${c.name}`); } },
-      el("div", { class: "row-main" }, el("div", { class: "row-title" }, c.name),
-        el("div", { class: "row-sub" }, c.frequent ? el("span", { class: "tag" }, "Frequently ordered") : null, [c.code, c.unit, Number(c.price) ? "last " + money(c.price) : ""].filter(Boolean).join(" · "))),
-      el("span", { class: "badge " + (inCart ? "done" : "add") }, inCart ? `${inCart.qty} in order` : "Add")));
-  });
+  const shown = PAGE * (1 + (App.more || 0));
+  hits.slice(0, shown).forEach(c => list.append(productCard(c)));
+  if (hits.length > shown) list.append(el("button", { class: "btn ghost more", type: "button", onclick: () => { App.more = (App.more || 0) + 1; const y = window.scrollY; renderCatalog(); window.scrollTo(0, y); } },
+    `Show more (${(hits.length - shown).toLocaleString()} left)`));
 }
-$("po-search").oninput = e => { App.q = e.target.value; renderCatalog(); };
+let searchTimer = null;
+$("po-search").oninput = e => { clearTimeout(searchTimer); searchTimer = setTimeout(() => { App.q = e.target.value; App.more = 0; renderCats(); renderCatalog(); }, 150); };
+$("po-search").onkeydown = e => { if (e.key === "Enter") e.target.blur(); }; // closes the keyboard so the results show
 function otherFind() { // the "look it up" link follows what the site has typed
   const name = $("other-name").value.trim(), a = $("other-find");
   a.href = name ? popularUrl({ code: "", name }) : "https://os.popular.com.sg/";
@@ -357,9 +405,10 @@ $("other-add").onclick = () => {
   const code = $("other-code").value.replace(/\s/g, ""), name = $("other-name").value.trim().replace(/\s+/g, " ");
   if (!name) { toast("Describe the item, so the purchaser knows what to look for."); return; }
   if (code && !/^\d{3,12}$/.test(code)) { toast("The order code is the number on the item's Popular page. Leave it blank if you don't know it."); return; }
-  const known = item(code), l = App.cart.lines.find(x => keyOf(x) === keyOf({ code, name }));
+  const known = item(code), l = lineOf({ code, name });
   setQty({ code, name: l ? l.name : known ? known.name : name }, (l ? l.qty : 0) + 1);
   $("other-code").value = ""; $("other-name").value = ""; otherFind(); $("po-other").open = false;
+  renderCatalog();
   toast(code ? `Added ${name}` : `Added ${name}. The purchaser will find its code.`);
 };
 $("btn-po-send").onclick = ev => {
@@ -373,6 +422,7 @@ $("btn-po-send").onclick = ev => {
   });
 };
 $("po-back").onclick = () => guard(loadHome);
+$("cart-back").onclick = () => openShop();
 async function refreshHome() { App.home = await api("home"); remember("pu.home", App.home); }
 
 /* ---------- one PO ---------- */
@@ -389,7 +439,7 @@ function renderView() {
       p.note ? el("p", { class: "note" }, p.note) : null),
     el("div", { class: "card" }, el("div", { class: "sup-head" }, el("h2", {}, "Items"), el("span", { class: "muted small" }, `${p.lines.length}`)),
       p.lines.map(l => el("div", { class: "line" }, el("span", { class: "q" }, `${l.qty} ×`),
-        el("div", { class: "row-main" }, el("div", { class: "row-title" }, l.name), el("div", { class: "row-sub" }, l.code ? null : "No order code yet")),
+        el("div", { class: "row-main" }, el("div", { class: "row-title" }, l.name), el("div", { class: "row-sub" }, l.code ? (modelOf(l) ? "Model No. " + modelOf(l) : null) : "No order code yet")),
         popLink(l, null, l.code ? "code" : "")))));
   const acts = el("div", { class: "actions" });
   const act = (label, cls, fn, ask) => acts.append(el("button", { class: "btn " + cls, type: "button", onclick: ev => { if (ask && !sure(ev.target, ask)) return; busyBtn(ev.target, "Saving…", fn); } }, label));
@@ -447,7 +497,7 @@ function renderCombine() {
   if (nocode) card.append(el("p", { class: "note small" }, `${nocode} item${nocode === 1 ? " has" : "s have"} no order code yet: a site described ${nocode === 1 ? "it" : "them"}. Tap “Find on Popular”, then put the code in and save it.`));
   lines.forEach(l => { const p = Number((item(l.code) || {}).price) || 0; est += p * l.qty;
     card.append(el("div", { class: "line" + (l.code ? "" : " wrap") }, el("span", { class: "q" }, `${l.qty} ×`),
-      el("div", { class: "row-main" }, el("div", { class: "row-title" }, l.name), el("div", { class: "row-sub" }, l.sites.join(", "))),
+      el("div", { class: "row-main" }, el("div", { class: "row-title" }, l.name), el("div", { class: "row-sub" }, [modelOf(l) ? "Model No. " + modelOf(l) : "", l.sites.join(", ")].filter(Boolean).join(" · "))),
       popLink(l, null, l.code ? "code" : ""),
       l.code ? null : codeFix(l, waiting))); });
   if (!lines.length) card.append(el("p", { class: "muted small" }, "Tick at least one order."));

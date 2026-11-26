@@ -62,8 +62,10 @@ async function mock(b) {
     if (ok && !ok(p)) throw new Error(refusal);
     Object.assign(p, { status: to, [to + "_by"]: user, [to + "_at"]: now(), updated_at: now() }); return { item: p }; };
   const learn = lines => lines.forEach(l => { if (l.code && !demo.catalog.some(c => c.code === l.code)) demo.catalog.push({ code: l.code, name: l.name, category: "", unit: "", price: "", price_date: "", frequent: false }); });
+  const mine = () => C.isPurchaser(demo.user, demo.settings.purchasers) ? demo.sites.map(s => s.code) : (demo.homes[demo.user] || []); // as mySites() in Code.gs
+  const mayOrder = site => { if (!mine().includes(site)) throw new Error(`You can only order for your own site (${mine().join(", ") || "none set"}). Ask ops to change your Home Site in Smart GMV.`); };
   const meta = o => { // as meta() in Code.gs: compact rows and a version for a phone that asks, nothing when it holds that version already
-    const base = { sites: demo.sites, categories: C.CATEGORIES, purchaser: C.isPurchaser(demo.user, demo.settings.purchasers), purchasers: demo.settings.purchasers, company: "KitchenBASE (demo)", statuses: C.PO_STATUS, urban_sheet: "" };
+    const base = { sites: demo.sites, categories: C.CATEGORIES, purchaser: C.isPurchaser(demo.user, demo.settings.purchasers), purchasers: demo.settings.purchasers, company: "KitchenBASE (demo)", statuses: C.PO_STATUS, urban_sheet: "", my_sites: mine() };
     if (!o || !o.compact) return Object.assign(base, { catalog: demo.catalog });
     const rows = C.packCatalog(demo.catalog), json = JSON.stringify(rows); let h = 0; for (let i = 0; i < json.length; i++) h = (h * 31 + json.charCodeAt(i)) | 0;
     const v = "demo" + (h >>> 0).toString(36);
@@ -87,7 +89,7 @@ async function mock(b) {
         if (i < 0) throw new Error(`${b.site} has no column in the Urban Plus tab "${r.tab}".`);
         const l = demo.log.find(x => x.round === r.round && x.site === b.site) || {};
         return { round: Object.assign({}, r, { label: C.roundLabel(r.round) }), site: b.site, by: l.by || "", at: l.at || "", items: p.items.map(it => ({ row: it.row, name: it.name, price: it.price, qty: it.qty[i] })) }; }
-      case "up_save": { const r = round();
+      case "up_save": { mayOrder(b.site); const r = round();
         if (!r) throw new Error("No Urban Plus round is open.");
         if (r.status !== "open") throw new Error(`The ${C.roundLabel(r.round)} order has gone to Urban Plus. Ask the purchaser to change it.`);
         const t = tabOf(r.tab), p = parsed(r.tab), si = p.sites.findIndex(s => s.code === b.site);
@@ -109,11 +111,11 @@ async function mock(b) {
       case "up_sent": { buyer(); const r = round(); if (!r || r.status !== "open") throw new Error("No open round to mark as sent.");
         Object.assign(r, { status: "sent", sent_by: user, sent_at: now() }); return { ok: true }; }
       case "po_get": return { item: po(b.id) };
-      case "po_submit": { if (!demo.sites.some(s => s.code === b.site)) throw new Error("Pick your site.");
-        const lines = C.cleanLines(b.lines), at = now(), id = "PO-" + at.slice(0, 10).replace(/-/g, "") + "-" + Math.random().toString(16).slice(2, 6).toUpperCase();
+      case "po_submit": { if (!demo.sites.some(s => s.code === b.site)) throw new Error("Pick your site."); mayOrder(b.site);
+        const lines = C.enrich(C.cleanLines(b.lines), C.indexCatalog(demo.catalog)), at = now(), id = "PO-" + at.slice(0, 10).replace(/-/g, "") + "-" + Math.random().toString(16).slice(2, 6).toUpperCase();
         const p = { id, site: b.site, status: "submitted", by: user, created_at: at, updated_at: at, note: String(b.note || "").trim(), lines, lines_text: C.linesText(lines), items: String(lines.length) };
         demo.pos.push(p); learn(lines); return { item: p }; }
-      case "po_update": { const p = po(b.id), lines = C.cleanLines(b.lines);
+      case "po_update": { const p = po(b.id), lines = C.enrich(C.cleanLines(b.lines), C.indexCatalog(demo.catalog));
         if (p.status !== "submitted") throw new Error("This order has been placed with Popular already. Ask the purchaser to change it.");
         Object.assign(p, { lines, lines_text: C.linesText(lines), items: String(lines.length), note: String(b.note || "").trim(), updated_at: now() }); learn(lines); return { item: p }; }
       case "po_cancel": return move(b.id, "cancelled", ["submitted"], p => p.by === user || C.isPurchaser(user, demo.settings.purchasers), "Only whoever sent it, or the purchaser, can cancel it.");
@@ -134,6 +136,8 @@ async function mock(b) {
   } catch (e) { return { error: e.message }; }
 }
 
+// a few items with their Popular product page and Model No., as catalog_update fills them in the live sheet
+const DEMO_POP = { "211452": { model: "1215", pid: "40506" }, "2286739": { pid: "60803" }, "2074999": { pid: "56113" }, "96009": { model: "0668", pid: "54656" } };
 async function demoSeed() {
   const src = await (async () => { for (const u of ["../backend/Code.gs", "backend/Code.gs"]) { const r = await fetch(u).catch(() => null); if (r && r.ok) return r.text(); }
     throw new Error("Demo mode needs backend/Code.gs served beside the app (run the server from the purchasing folder)."); })();
@@ -161,7 +165,9 @@ async function demoSeed() {
   return {
     C, user: "", names: ["Demo Purchaser", "Demo Supervisor", "Demo Shift Lead"], sites,
     settings: { purchasers: "Demo Purchaser" },
-    catalog: C.SEED_CATALOG.map(([code, name, category, unit, price, price_date]) => ({ code, name, category, unit, price, price_date, frequent: !!price })), // priced = on a Popular invoice, as the live sheet's source
+    homes: { "Demo Supervisor": ["S12", "S1"], "Demo Shift Lead": ["S3"] }, // Smart GMV's Home Site; the purchaser orders for every site
+    catalog: C.SEED_CATALOG.map(([code, name, category, unit, price, price_date]) => { const x = DEMO_POP[code] || {};
+      return { code, name, category, unit, price, price_date, frequent: !!price, model: x.model || "", pid: x.pid || "", popular_id: x.pid || "" }; }), // priced = on a Popular invoice, as the live sheet's source
     tabs: [{ tab: C.tabNameFor(month), values, formulas }, { tab: C.tabNameFor(prev), values: old, formulas }],
     rounds: [{ round: prev, tab: C.tabNameFor(prev), status: "sent", opened_by: "Demo Purchaser", opened_at: ago(24 * 30), sent_by: "Demo Purchaser", sent_at: ago(24 * 25) },
       { round: month, tab: C.tabNameFor(month), status: "open", opened_by: "Demo Purchaser", opened_at: ago(48), sent_by: "", sent_at: "" }],

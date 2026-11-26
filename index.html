@@ -66,15 +66,16 @@
 <section id="scr-po" class="screen withbar" hidden>
   <header class="topbar">
     <button id="po-back" class="link light" type="button">‹ Back</button>
-    <div class="mid"><div class="topbar-title" id="po-title">Popular order</div><div class="topbar-sub" id="po-sub"></div></div>
+    <div class="mid"><div class="topbar-title" id="po-title">Popular</div><div class="topbar-sub" id="po-sub"></div></div>
     <span class="spacer"></span>
   </header>
-  <div class="body">
-    <div id="po-cart"></div>
-    <div class="listhead">Add items</div>
-    <input id="po-search" class="search" type="search" placeholder="Search by name or order code" autocomplete="off">
+  <div class="shop-top">
+    <input id="po-search" class="search" type="search" placeholder="Search everything: name, order code, model no." autocomplete="off" enterkeyhint="search">
     <div id="po-cats" class="chips"></div>
-    <div id="po-list" class="list"></div>
+  </div>
+  <div class="body shop-body">
+    <div id="po-hint" class="muted small shop-hint"></div>
+    <div id="po-list" class="shop"></div>
     <details id="po-other" class="card other">
       <summary>Not in the list? Describe it here</summary>
       <p class="muted small">Say what you need. If you know its order code, put that in too. If you don't, the purchaser will find it on Popular.</p>
@@ -84,6 +85,16 @@
       <button id="other-add" class="btn ghost" type="button">Add to the order</button>
     </details>
   </div>
+  <div class="bottombar"><button id="btn-po-cart" class="btn dark cartbar" type="button"></button></div>
+</section>
+
+<section id="scr-cart" class="screen withbar" hidden>
+  <header class="topbar">
+    <button id="cart-back" class="link light" type="button">‹ Shop</button>
+    <div class="mid"><div class="topbar-title" id="cart-title">Your order</div><div class="topbar-sub" id="cart-sub"></div></div>
+    <span class="spacer"></span>
+  </header>
+  <div class="body"><div id="po-cart"></div></div>
   <div class="bottombar"><button id="btn-po-send" class="btn primary" type="button">Send order</button></div>
 </section>
 
