@@ -42,6 +42,30 @@ const mySite = () => { const s = localStorage.getItem("pu.site") || ""; return A
 const status = s => (App.meta.statuses || {})[s] || s;
 const BADGE = { submitted: "soon", ordered: "draft", sent: "draft", received: "done", cancelled: "" };
 const item = code => code ? App.meta.catalog.find(c => c.code === code) : null;
+/* The catalog (thousands of items) is saved on the phone apart from the rest of the settings, with the version the server gave it. The phone
+ * sends that version with each login and settings call, and the server sends the catalog again only when it has changed. */
+const catv = () => (cached("pu.cat") || {}).v || "";
+function withCatalog(m) {
+  if (m.catalog_rows) { m.catalog = m.catalog_rows.map(r => ({ code: r[0], name: r[1], category: r[2], unit: r[3], price: r[4], frequent: !!r[5] })); delete m.catalog_rows; }
+  else if (!m.catalog && m.catalog_version) { const c = cached("pu.cat"); if (c && c.v === m.catalog_version) m.catalog = c.items; }
+  return m;
+}
+async function getMeta() {
+  const m = withCatalog(await api("meta", { compact: true, catv: catv() }));
+  return m.catalog ? m : withCatalog(await api("meta", { compact: true })); // the saved copy was lost: ask for it in full
+}
+function saveMeta(m) {
+  if (!m.catalog_version) { remember("pu.meta", m); return; } // the demo: one piece
+  const rest = Object.assign({}, m); delete rest.catalog;
+  remember("pu.meta", rest);
+  if (catv() !== m.catalog_version) remember("pu.cat", { v: m.catalog_version, items: m.catalog });
+}
+function savedMeta() {
+  const m = cached("pu.meta");
+  if (!m || m.catalog) return m;
+  const c = cached("pu.cat");
+  return c && c.v === m.catalog_version ? Object.assign(m, { catalog: c.items }) : null;
+}
 // as in Code.gs: one line per item, by order code or, with no code, by its description; Popular's own search finds either
 const keyOf = l => l.code ? l.code : "?" + String(l.name || "").trim().toLowerCase().replace(/\s+/g, " ");
 const POPULAR_SEARCH = "https://os.popular.com.sg/index.php?route=product/search&description=1";
@@ -72,7 +96,7 @@ function pickName(name) {
   const btn = $("pin-panel").querySelector("button[type=submit]");
   $("pin-panel").onsubmit = ev => {
     ev.preventDefault();
-    busyBtn(btn, "Checking PIN…", async () => { const a = await api("login", { name, pin: pin.value }); session.save(a); await enterApp(a); });
+    busyBtn(btn, "Checking PIN…", async () => { const a = withCatalog(await api("login", { name, pin: pin.value, compact: true, catv: catv() })); session.save(a); await enterApp(a); });
   };
 }
 // a second tap within a few seconds confirms; pop-up confirm() boxes are blocked on some phones and the tap then does nothing
@@ -91,12 +115,12 @@ $("pin-back").onclick = () => guard(loadLogin);
 
 /* ---------- home ---------- */
 async function enterApp(meta) { // login carries the sites and the catalog; a resumed session paints from the cached copy, then refreshes
-  const fromCache = !(meta && meta.catalog) && cached("pu.meta");
-  App.meta = meta && meta.catalog ? meta : (fromCache || await api("meta"));
+  const fromCache = !(meta && meta.catalog) && savedMeta();
+  App.meta = meta && meta.catalog ? meta : (fromCache || await getMeta());
   if (!App.meta.catalog) throw new Error("Could not load the app settings. Try again.");
-  remember("pu.meta", App.meta);
+  saveMeta(App.meta);
   await loadHome();
-  if (fromCache) api("meta").then(m => { if (m.catalog) { App.meta = m; remember("pu.meta", m); if (!$("scr-home").hidden) renderHome(); if (!$("scr-po").hidden) { renderCats(); renderCatalog(); } } }).catch(() => {});
+  if (fromCache) getMeta().then(m => { if (m.catalog) { App.meta = m; saveMeta(m); if (!$("scr-home").hidden) renderHome(); if (!$("scr-po").hidden) { renderCats(); renderCatalog(); } } }).catch(() => {});
 }
 async function loadHome() {
   show("scr-home");
@@ -401,7 +425,7 @@ function codeFix(l, waiting) { // the purchaser found a described item on Popula
     busyBtn(save, "Saving…", async () => {
       const a = await api("po_code", { ids, name: l.name, code });
       toast(`Code ${code} saved on ${a.changed} order${a.changed === 1 ? "" : "s"}.`);
-      await refreshHome(); App.meta = await api("meta"); remember("pu.meta", App.meta); renderCombine();
+      await refreshHome(); App.meta = await getMeta(); saveMeta(App.meta); renderCombine();
     });
   } }, "Save");
   return el("div", { class: "codefix" }, input, save);

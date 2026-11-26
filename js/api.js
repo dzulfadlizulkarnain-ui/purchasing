@@ -62,15 +62,20 @@ async function mock(b) {
     if (ok && !ok(p)) throw new Error(refusal);
     Object.assign(p, { status: to, [to + "_by"]: user, [to + "_at"]: now(), updated_at: now() }); return { item: p }; };
   const learn = lines => lines.forEach(l => { if (l.code && !demo.catalog.some(c => c.code === l.code)) demo.catalog.push({ code: l.code, name: l.name, category: "", unit: "", price: "", price_date: "", frequent: false }); });
-  const meta = () => ({ sites: demo.sites, catalog: demo.catalog, categories: C.CATEGORIES, purchaser: C.isPurchaser(demo.user, demo.settings.purchasers), purchasers: demo.settings.purchasers, company: "KitchenBASE (demo)", statuses: C.PO_STATUS, urban_sheet: "" });
+  const meta = o => { // as meta() in Code.gs: compact rows and a version for a phone that asks, nothing when it holds that version already
+    const base = { sites: demo.sites, categories: C.CATEGORIES, purchaser: C.isPurchaser(demo.user, demo.settings.purchasers), purchasers: demo.settings.purchasers, company: "KitchenBASE (demo)", statuses: C.PO_STATUS, urban_sheet: "" };
+    if (!o || !o.compact) return Object.assign(base, { catalog: demo.catalog });
+    const rows = C.packCatalog(demo.catalog), json = JSON.stringify(rows); let h = 0; for (let i = 0; i < json.length; i++) h = (h * 31 + json.charCodeAt(i)) | 0;
+    const v = "demo" + (h >>> 0).toString(36);
+    return Object.assign(base, o.catv === v ? { catalog_version: v } : { catalog_version: v, catalog_rows: rows }); };
   try {
     switch (b.action) {
       case "roster": return { names: demo.names };
-      case "login": if (String(b.pin) !== "1234") return { error: "Wrong PIN. The demo PIN is 1234." }; demo.user = b.name; return Object.assign({ token: "demo", name: b.name }, meta());
+      case "login": if (String(b.pin) !== "1234") return { error: "Wrong PIN. The demo PIN is 1234." }; demo.user = b.name; return Object.assign({ token: "demo", name: b.name }, meta(b));
     }
     if (b.token !== "demo" || !demo.user) return { error: "Session expired. Log in again.", auth: true };
     switch (b.action) {
-      case "meta": return meta();
+      case "meta": return meta(b);
       case "home": {
         const r = round(), tabs = C.urbanTabs(demo.tabs.map(t => t.tab)), out = { round: r && Object.assign({}, r, { label: C.roundLabel(r.round) }), newest: tabs[0] || null, sites: [] };
         if (r) { const p = parsed(r.tab); out.sites = p.sites.map((s, i) => { const l = demo.log.find(x => x.round === r.round && x.site === s.code) || {};
