@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Purchasing</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="theme-color" content="#000000">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<link rel="stylesheet" href="css/app.css">
+<link rel="stylesheet" href="css/purchasing.css">
+</head>
+<body>
+
+<div id="demo-banner" class="banner" hidden>Demo mode: no backend connected. PIN is 1234. Nothing is saved.</div>
+
+<section id="scr-login" class="screen" hidden>
+  <header class="hero">
+    <img src="icons/icon-192.png" alt="">
+    <h1>Purchasing</h1>
+    <div class="tag">Urban Plus and Popular</div>
+    <div class="by">by KitchenBASE</div>
+  </header>
+  <div class="sheet">
+    <div id="login-pick">
+      <div class="eyebrow">Pick your name</div>
+      <input id="login-search" class="search" type="search" placeholder="Search names" autocomplete="off">
+      <div id="login-list" class="list"></div>
+      <p class="muted small">Handing the phone to someone else? Tap Lock at the top of the app first.</p>
+    </div>
+    <form id="pin-panel" hidden>
+      <button type="button" id="pin-back" class="link">‹ Back</button>
+      <h2 id="pin-name"></h2>
+      <label for="pin">Enter your PIN</label>
+      <input id="pin" class="pin" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" required>
+      <button class="btn primary" type="submit">Log in</button>
+      <p class="muted small">The same PIN as the Kitchen Handover app. Forgot it? Ask the admin.</p>
+    </form>
+  </div>
+</section>
+
+<section id="scr-home" class="screen" hidden>
+  <header class="topbar">
+    <div class="mid left"><div class="topbar-title">Purchasing</div><div class="topbar-sub" id="home-user"></div></div>
+    <button id="btn-lock" class="link light" type="button">Lock</button>
+  </header>
+  <div class="body">
+    <div id="home-tabs" class="seg big" hidden></div>
+    <div id="home-body"></div>
+  </div>
+</section>
+
+<section id="scr-urban" class="screen withbar" hidden>
+  <header class="topbar">
+    <button id="urban-back" class="link light" type="button">‹ Back</button>
+    <div class="mid"><div class="topbar-title">Urban Plus</div><div class="topbar-sub" id="urban-sub"></div></div>
+    <span class="spacer"></span>
+  </header>
+  <div id="urban-body" class="body"></div>
+  <div class="bottombar" id="urban-bar"><button id="btn-urban-save" class="btn primary" type="button">Send order</button></div>
+</section>
+
+<section id="scr-po" class="screen withbar" hidden>
+  <header class="topbar">
+    <button id="po-back" class="link light" type="button">‹ Back</button>
+    <div class="mid"><div class="topbar-title" id="po-title">Popular order</div><div class="topbar-sub" id="po-sub"></div></div>
+    <span class="spacer"></span>
+  </header>
+  <div class="body">
+    <div id="po-cart"></div>
+    <div class="listhead">Add items</div>
+    <input id="po-search" class="search" type="search" placeholder="Search by name or order code" autocomplete="off">
+    <div id="po-cats" class="chips"></div>
+    <div id="po-list" class="list"></div>
+    <details id="po-other" class="card other">
+      <summary>Not in the list? Add it by order code</summary>
+      <p class="muted small">The order code is on the item's page on os.popular.com.sg.</p>
+      <label class="field"><span class="label">Order code</span><input id="other-code" inputmode="numeric" autocomplete="off" placeholder="e.g. 2286739"></label>
+      <label class="field"><span class="label">Item name</span><input id="other-name" autocomplete="off" placeholder="as on Popular's website"></label>
+      <button id="other-add" class="btn ghost" type="button">Add to the order</button>
+    </details>
+  </div>
+  <div class="bottombar"><button id="btn-po-send" class="btn primary" type="button">Send order</button></div>
+</section>
+
+<section id="scr-view" class="screen" hidden>
+  <header class="topbar">
+    <button id="view-back" class="link light" type="button">‹ Back</button>
+    <div class="mid"><div class="topbar-title" id="view-title"></div><div class="topbar-sub" id="view-sub"></div></div>
+    <span class="spacer"></span>
+  </header>
+  <div id="view-body" class="body"></div>
+</section>
+
+<section id="scr-combine" class="screen withbar" hidden>
+  <header class="topbar">
+    <button id="combine-back" class="link light" type="button">‹ Back</button>
+    <div class="mid"><div class="topbar-title">Combined Popular order</div><div class="topbar-sub" id="combine-sub"></div></div>
+    <span class="spacer"></span>
+  </header>
+  <div id="combine-body" class="body"></div>
+  <div class="bottombar"><button id="btn-ordered" class="btn primary" type="button">Mark as ordered</button></div>
+</section>
+
+<div id="toast" role="status" hidden></div>
+
+<script src="js/api.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
