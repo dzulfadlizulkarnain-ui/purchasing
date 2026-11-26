@@ -104,6 +104,7 @@ async function loadHome() {
 }
 function renderHome() {
   const tabs = $("home-tabs"), buyer = App.meta.purchaser;
+  $("home-user").textContent = session.name + (buyer ? " · purchaser" : "");
   tabs.hidden = !buyer;
   if (!buyer) App.tab = "order";
   tabs.replaceChildren(...[["order", "Order"], ["buy", "Purchasing"]].map(([k, label]) =>
